@@ -1,124 +1,85 @@
-CGO_CPPFLAGS ?= ${CPPFLAGS}
-export CGO_CPPFLAGS
-CGO_CFLAGS ?= ${CFLAGS}
-export CGO_CFLAGS
-CGO_LDFLAGS ?= $(filter -g -L% -l% -O%,${LDFLAGS})
-export CGO_LDFLAGS
+# Makefile for gh CLI development
 
-EXE =
-ifeq ($(shell go env GOOS),windows)
-EXE = .exe
-endif
+DEFAULT_GOAL := help
 
-## The following tasks delegate to `script/build.go` so they can be run cross-platform.
+GO_LDFLAGS := -X github.com/cli/cli/v2/internal/build.Version=$(GH_VERSION) \
+	-X github.com/cli/cli/v2/internal/build.Date=$(shell date -u '+%Y-%m-%d')
 
-.PHONY: bin/gh$(EXE)
-bin/gh$(EXE): script/build$(EXE)
-	@script/build$(EXE) $@
+GH_VERSION ?= $(shell git describe --tags 2>/dev/null || echo "v0.0.0-dev")
 
-script/build$(EXE): script/build.go
-ifeq ($(EXE),)
-	GOOS= GOARCH= GOARM= GOFLAGS= CGO_ENABLED= go build -o $@ $<
-else
-	go build -o $@ $<
-endif
+BIN_DIR ?= bin
+BIN_NAME ?= gh
+BIN_PATH := $(BIN_DIR)/$(BIN_NAME)
 
-.PHONY: clean
-clean: script/build$(EXE)
-	@$< $@
+SRC := $(shell find . -name '*.go' -not -path './vendor/*')
 
-.PHONY: manpages
-manpages: script/build$(EXE)
-	@$< $@
+.PHONY: help
+help: ## Show this help message
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: completions
-completions: bin/gh$(EXE)
-	mkdir -p ./share/bash-completion/completions ./share/fish/vendor_completions.d ./share/zsh/site-functions ./share/zsh/vendor-completions
-	bin/gh$(EXE) completion -s bash > ./share/bash-completion/completions/gh
-	bin/gh$(EXE) completion -s fish > ./share/fish/vendor_completions.d/gh.fish
-	bin/gh$(EXE) completion -s zsh > ./share/zsh/site-functions/_gh
-	# On Debian/Ubuntu the default zsh fpath does not include /usr/share/zsh/site-functions
-	# but does include /usr/share/zsh/vendor-completions, so we ship both paths in our
-	# .deb and .rpm packages. See https://github.com/cli/cli/issues/13166
-	cp ./share/zsh/site-functions/_gh ./share/zsh/vendor-completions/_gh
+.PHONY: build
+build: $(BIN_PATH) ## Build the gh binary
 
-.PHONY: lint
-lint:
-	golangci-lint run ./...
-
-# just convenience tasks around `go test`
-.PHONY: test
-test:
-	go test ./...
-
-# For more information, see https://github.com/cli/cli/blob/trunk/acceptance/README.md
-.PHONY: acceptance
-acceptance:
-	go test -tags acceptance ./acceptance
-
-## Site-related tasks are exclusively intended for use by the GitHub CLI team and for our release automation.
-
-site:
-	git clone https://github.com/github/cli.github.com.git "$@"
-
-.PHONY: site-docs
-site-docs: site
-	git -C site pull
-	git -C site rm 'manual/gh*.md' 2>/dev/null || true
-	go run ./cmd/gen-docs --website --doc-path site/manual
-	rm -f site/manual/*.bak
-	git -C site add 'manual/gh*.md'
-	git -C site commit -m 'update help docs' || true
-
-.PHONY: site-bump
-site-bump: site-docs
-ifndef GITHUB_REF
-	$(error GITHUB_REF is not set)
-endif
-	sed -i.bak -E 's/(assign version = )".+"/\1"$(GITHUB_REF:refs/tags/v%=%)"/' site/index.html
-	rm -f site/index.html.bak
-	git -C site commit -m '$(GITHUB_REF:refs/tags/v%=%)' index.html
-
-## Install/uninstall tasks are here for use on *nix platform. On Windows, there is no equivalent.
-
-DESTDIR :=
-prefix  ?= /usr/local
-bindir  := ${prefix}/bin
-datadir := ${prefix}/share
-mandir  := ${datadir}/man
+$(BIN_PATH): $(SRC)
+	@mkdir -p $(BIN_DIR)
+	go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BIN_PATH) ./cmd/gh
 
 .PHONY: install
-install: bin/gh manpages completions
-	install -d ${DESTDIR}${bindir}
-	install -m755 bin/gh ${DESTDIR}${bindir}/
-	install -d ${DESTDIR}${mandir}/man1
-	install -m644 ./share/man/man1/* ${DESTDIR}${mandir}/man1/
-	install -d ${DESTDIR}${datadir}/bash-completion/completions
-	install -m644 ./share/bash-completion/completions/gh ${DESTDIR}${datadir}/bash-completion/completions/gh
-	install -d ${DESTDIR}${datadir}/fish/vendor_completions.d
-	install -m644 ./share/fish/vendor_completions.d/gh.fish ${DESTDIR}${datadir}/fish/vendor_completions.d/gh.fish
-	install -d ${DESTDIR}${datadir}/zsh/site-functions
-	install -m644 ./share/zsh/site-functions/_gh ${DESTDIR}${datadir}/zsh/site-functions/_gh
+install: ## Install gh to GOPATH/bin
+	go install -trimpath -ldflags "$(GO_LDFLAGS)" ./cmd/gh
 
-.PHONY: uninstall
-uninstall:
-	rm -f ${DESTDIR}${bindir}/gh ${DESTDIR}${mandir}/man1/gh.1 ${DESTDIR}${mandir}/man1/gh-*.1
-	rm -f ${DESTDIR}${datadir}/bash-completion/completions/gh
-	rm -f ${DESTDIR}${datadir}/fish/vendor_completions.d/gh.fish
-	rm -f ${DESTDIR}${datadir}/zsh/site-functions/_gh
+.PHONY: test
+test: ## Run unit tests
+	go test ./...
 
-.PHONY: macospkg
-macospkg: manpages completions
-ifndef VERSION
-	$(error VERSION is not set. Use `make macospkg VERSION=vX.Y.Z`)
-endif
-	./script/release --local "$(VERSION)" --platform macos
-	./script/pkgmacos $(VERSION)
+.PHONY: test-race
+test-race: ## Run unit tests with race detector
+	go test -race ./...
 
-.PHONY: licenses
-licenses:
-	./script/licenses $$(go env GOOS) $$(go env GOARCH)
+.PHONY: lint
+lint: ## Run golint
+	golint ./...
 
-.PHONY: licenses-check
-licenses-check:
-	./script/licenses --check
+.PHONY: vet
+vet: ## Run go vet
+	go vet ./...
+
+.PHONY: fmt
+fmt: ## Format Go source files
+	gofmt -w $(SRC)
+
+.PHONY: fmt-check
+fmt-check: ## Check if Go source files are formatted
+	@diff=$$(gofmt -d $(SRC)); \
+	if [ -n "$$diff" ]; then \
+		echo "$$diff"; \
+		exit 1; \
+	fi
+
+.PHONY: clean
+clean: ## Remove build artifacts
+	rm -rf $(BIN_DIR)
+
+.PHONY: deps
+deps: ## Download Go module dependencies
+	go mod download
+
+.PHONY: tidy
+tidy: ## Tidy Go module dependencies
+	go mod tidy
+
+.PHONY: generate
+generate: ## Run go generate
+	go generate ./...
+
+.PHONY: manpages
+manpages: build ## Generate man pages
+	$(BIN_PATH) docs --type man --doc-path ./share/man/man1/
+
+.PHONY: completions
+completions: build ## Generate shell completions
+	@mkdir -p share/completions
+	$(BIN_PATH) completion -s bash > share/completions/gh.bash
+	$(BIN_PATH) completion -s zsh > share/completions/gh.zsh
+	$(BIN_PATH) completion -s fish > share/completions/gh.fish
