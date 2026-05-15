@@ -37,6 +37,11 @@ test: ## Run unit tests
 test-race: ## Run unit tests with race detector
 	go test -race ./...
 
+# Added -count=1 to disable test result caching, useful when debugging flaky tests
+.PHONY: test-nocache
+test-nocache: ## Run unit tests without cache
+	go test -count=1 ./...
+
 .PHONY: lint
 lint: ## Run golint
 	golint ./...
