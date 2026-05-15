@@ -42,6 +42,11 @@ test-race: ## Run unit tests with race detector
 test-nocache: ## Run unit tests without cache
 	go test -count=1 ./...
 
+# Personal shortcut: run tests with verbose output for easier debugging
+.PHONY: test-verbose
+test-verbose: ## Run unit tests with verbose output
+	go test -v ./...
+
 .PHONY: lint
 lint: ## Run golint
 	golint ./...
