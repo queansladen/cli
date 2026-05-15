@@ -47,6 +47,11 @@ test-nocache: ## Run unit tests without cache
 test-verbose: ## Run unit tests with verbose output
 	go test -v ./...
 
+# Personal shortcut: run a specific package's tests verbosely, e.g. make test-pkg PKG=./pkg/cmd/...
+.PHONY: test-pkg
+test-pkg: ## Run tests for a specific package (set PKG= to target)
+	go test -v $(PKG)
+
 .PHONY: lint
 lint: ## Run golint
 	golint ./...
